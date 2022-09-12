@@ -1,0 +1,283 @@
+clc
+clear all
+close all
+
+%% Building the Correlation Matrix
+stock_value_01=csvread('2013_2020.csv',1,1); %taking without dates or tickers (1,1)
+stock_value_0=csvread('2019_2020.csv',1,1);
+%stock_value_0=csvread('1990_1996.csv',1,1);
+stock_value_02=csvread('1990_1996.csv',1,1);
+stock_value_1=csvread('2020_2021.csv',1,1);
+
+[TimeUnits,N_stocks_0]=size(stock_value_0);
+[TimeUnits_01,N_stocks_01]=size(stock_value_0);
+[TimeUnits_1,N_stocks_1]=size(stock_value_1);
+[CovMat_0,CorMat_0,sigmas_0,log_return_means_0,log_returns_0] = extract_data_from_values(stock_value_0);
+[CovMat_01,CorMat_01,sigmas_01,log_return_means_01,log_returns_01] = extract_data_from_values(stock_value_01);
+[CovMat_02,CorMat_02,sigmas_02,log_return_means_02,log_returns_02] = extract_data_from_values(stock_value_02);
+[CovMat_1,CorMat_1,sigmas_1,log_return_means_1,log_returns_1] = extract_data_from_values(stock_value_1);
+
+%% EIGENVALUE DISTRIBUTION OF THE CORRELATION MATRIX
+% Building the Random Martix
+size_log_returns_0 = size(log_returns_0);
+size_log_returns_01 = size(log_returns_01);
+size_log_returns_02 = size(log_returns_02);
+random_log_returns_0=randn(size_log_returns_0);
+random_symetric_mat_0=(1/(size_log_returns_0(1)))*(random_log_returns_0.')*random_log_returns_0;
+space = 0.0001;
+[evectors_hor_0,evalues_0,lambda_plus_0,lambda_minus_0,pdf_rm_evalues_0,lambdas_0] = extract_data_from_random_symetric_matrix(CorMat_0,size_log_returns_0, space);
+[evectors_hor_01,evalues_01,lambda_plus_01,lambda_minus_01,pdf_rm_evalues_01,lambdas_01] = extract_data_from_random_symetric_matrix(CorMat_01,size_log_returns_01, space);
+[evectors_hor_02,evalues_02,lambda_plus_02,lambda_minus_02,pdf_rm_evalues_02,lambdas_02] = extract_data_from_random_symetric_matrix(CorMat_02,size_log_returns_02, space);
+[evectors_hor_rand,evalues_rand,lambda_plus_rand,lambda_minus_rand,pdf_rm_evalues_rand,lambdas_rand] = extract_data_from_random_symetric_matrix(random_symetric_mat_0,size_log_returns_0,space);
+
+%% PCA - Deleting Deviating eigenvalues and eigenvectors
+clean_evalues_0 = evalues_0;
+clean_evalues_0((clean_evalues_0 > lambda_minus_0) & (clean_evalues_0 < lambda_plus_0)) = (0);
+CleanEigValMat_0 = diag(clean_evalues_0);
+AuxCorMat_0 = sigmas_0 * sigmas_0.';
+CleanCorMat_0 = evectors_hor_0 * CleanEigValMat_0 * (evectors_hor_0^-1);
+CleanCorMat_0(1:1+N_stocks_0:end) = 1; %We need to have ones on the diagonal
+CleanCovMat_0 = CleanCorMat_0.*AuxCorMat_0;
+
+%% Inverse Participation Ratio of the EigeVectors
+
+[I_02,p_rate_02] = ipr(evectors_hor_02);
+[I_R,p_rate_R] = ipr(evectors_hor_rand);
+
+%% Largest Components of Eigenvectors
+
+Indexes_2last = largest_10_stocks_indexes(evectors_hor_0,200,size_log_returns_0(1,2));
+[num,stocks_ticker_list]  = xlsread('2019_2020.xlsx');
+stocks_ticker_list = stocks_ticker_list(1,2:end);
+biggest_stocks_ticker_list_2_last = stocks_ticker_list(Indexes_2last);
+[num,tickers_with_CIS]  = xlsread('constituents_csv.xlsx');
+index_in_CIS = zeros(1,10);
+for i = 1:10
+    index_in_CIS(i) = find(strcmp(tickers_with_CIS(:,1),biggest_stocks_ticker_list_2_last(i)));
+end
+sectors_of_uevector = tickers_with_CIS(index_in_CIS,:);
+%% Eigen-Portfolios
+Return_vec_len = 200;
+Return = 1:1:Return_vec_len;
+
+[opt_portfolio_clean_0,min_risk_clean_0] = opt_risk_for_return_vector(CleanCovMat_0, Return, log_return_means_0); %prediction_clean using predicted returns
+[opt_portfolio_dirty_0,min_risk_dirty_0] = opt_risk_for_return_vector(CovMat_0, Return, log_return_means_0); %prediction using predicted returns
+
+opt_portfolio_clean_0_test = opt_portfolio_clean_0(:,1);
+
+[opt_portfolio_clean_0_cheat,min_risk_clean_0_cheat] = opt_risk_for_return_vector(CleanCovMat_0, Return, log_return_means_1); %prediction_clean using realized returns
+[opt_portfolio_dirty_0_cheat,min_risk_dirty_0_cheat] = opt_risk_for_return_vector(CovMat_0, Return, log_return_means_1); %prediction using realized returns
+
+
+% realized values:
+[opt_portfolio_1,min_risk_1] = opt_risk_for_return_vector(CovMat_1 ,Return, log_return_means_1); %realized using realized returns
+return_realized_using_clean = opt_portfolio_clean_0.' * log_return_means_1;
+return_realized_using_dirty = opt_portfolio_dirty_0.' * log_return_means_1;
+risk_realized_using_clean = zeros(length(Return),1);
+risk_realized_using_dirty = zeros(length(Return),1);
+for i=1:length(Return)
+    risk_realized_using_clean(i) = opt_portfolio_clean_0(:,i).' * CovMat_1 * opt_portfolio_clean_0(:,i);
+    risk_realized_using_dirty(i) = opt_portfolio_dirty_0(:,i).' * CovMat_1 * opt_portfolio_dirty_0(:,i);
+end
+
+%% Cleaning realized risk matrix
+
+size_log_returns_1 =size(log_returns_1);
+random_log_returns_1=randn(size_log_returns_1);
+[evectors_hor_1,evalues_1,lambda_plus_1,lambda_minus_1,pdf_rm_evalues_1,lambdas_1] = extract_data_from_random_symetric_matrix(CorMat_1,size_log_returns_1, 0.0001);
+clean_evalues_1 = evalues_1;
+clean_evalues_1((clean_evalues_1 > lambda_minus_1) & (clean_evalues_1 < lambda_plus_1)) = (0);
+CleanEigValMat_1 = diag(clean_evalues_1);
+AuxCorMat_1 = sigmas_1 * sigmas_1.';
+CleanCorMat_1 = evectors_hor_1 * CleanEigValMat_1 * (evectors_hor_1^-1);
+CleanCorMat_1(1:1+N_stocks_1:end) = 1; %We need to have ones on the diagonal
+CleanCovMat_1 = CleanCorMat_1.*AuxCorMat_1;
+[opt_portfolio_clean_1,min_risk_clean_1] = opt_risk_for_return_vector(CleanCovMat_1, Return, log_return_means_1); %prediction_clean using predicted returns
+
+%% SVD
+[U_0,S_0,V_0] = svd(CorMat_0);
+S_0Values = diag(S_0);
+
+%% plotting
+close all
+
+figure(1);
+hold on
+plot(Return, min_risk_clean_0_cheat, 'b')
+plot(Return, min_risk_1, 'k')
+plot(Return, min_risk_clean_1, 'k--')
+legend('Cleaned Predicted Risk', 'Realized Risk', 'Realized Risk Using Clean Realized Correlations')
+title('Risk v. Return For Consistant Expected Returns Clean')
+ylabel('Risk')
+xlabel('Return')
+%set(gca, 'YScale', 'log','XScale', 'log')
+hold off
+
+figure(2);
+hold on
+plot(Return, min_risk_dirty_0_cheat,'r')
+plot(Return, min_risk_1, 'k')
+legend('Dirty predicted Risk','Realized Risk')
+title('Risk v. Return For Consistant Expected Returns Dirty')
+ylabel('Risk')
+xlabel('Return')
+%set(gca, 'YScale', 'log','XScale', 'log')
+hold off
+
+%to scale:
+figure(3);
+hold on
+plot(Return, min_risk_dirty_0_cheat,'r')
+plot(Return, min_risk_clean_0_cheat,'b')
+plot(Return, min_risk_1, 'k')
+plot(Return, min_risk_clean_1, '--k')
+title('Risk v. Return For Consistant Expected Returns to Scale')
+legend('Dirty predicted Risk', 'Cleaned Predicted Risk', 'Realized Risk', 'Realized Risk Using Clean Realized Correlations')
+ylabel('Risk')
+xlabel('Return')
+
+%set(gca, 'YScale', 'log','XScale', 'log')
+hold off
+
+
+figure(4); 
+%extra- real comparison between one year and another. 
+% we use 'return' for x-axis, but we mean 'portfolio number'
+%subplot(221)
+hold on
+plot(Return, Return, 'k')
+plot(Return,return_realized_using_dirty, '*r')
+plot(Return,return_realized_using_clean, '*b')
+legend('Predicted Return', 'Dirty Realized Return', 'Cleaned Realized Return')
+title('Return For Portfolios With Only Previous Data')
+ylabel('Return')
+xlabel('Portfolio Number')
+hold off
+
+figure(5)
+%subplot(223)
+hold on
+plot(Return, min_risk_clean_0,'b')
+plot(Return, risk_realized_using_clean , '*b')
+legend('Clean Predicted Risk', 'Cleaned Realized Risk')
+title('Risk For Cleaned Portfolios With Only Previous Data')
+ylabel('Risk')
+xlabel('Portfolio Number')
+hold off
+
+figure(6)
+%subplot(224)
+hold on
+plot(Return, min_risk_dirty_0,'r')
+plot(Return, risk_realized_using_dirty , '*r')
+legend('Dirty Predicted Risk', 'Dirty Realized Risk')
+title('Risk For Dirty Portfolios With Only Previous Data')
+ylabel('Risk')
+xlabel('Portfolio Number')
+hold off
+
+%to scale:
+figure(7)
+hold on
+plot(Return, min_risk_dirty_0, 'r')
+plot(Return, risk_realized_using_dirty , '*r')
+plot(Return, min_risk_clean_0, 'b')
+plot(Return, risk_realized_using_clean , '*b')
+set(gca, 'YScale', 'log','XScale', 'log')
+title('Risks to Scale With Only Previous Data')
+legend('Dirty predicted Risk', 'Dirty Realized Risk', 'Cleaned Predicted Risk', 'Cleaned Realized Risk')
+ylabel('Risk')
+xlabel('Portfolio Number')
+hold off
+
+%% IPR Plots
+%Fig 11.a
+figure;
+loglog(evalues_rand,I_R,'-o');
+xlim ([10^-1,100]);
+ylim ([10^-03,10]);
+xlabel('Eigenvalue /lambda');
+ylabel('inverse participation ratio');
+grid on
+
+% Fig 11.b/c/d
+figure;
+loglog(evalues_02,I_02,'-o');
+xlim ([10^-2,1000]);
+ylim ([10^-03,10]);
+xlabel('Eigenvalue Lambda');
+ylabel('inverse participation ratio I');
+grid on
+
+
+%% Test 2 - Showing the Guassian of the random Eigenvalues
+figure;
+n=50;
+u_n = evectors_hor_0(:,n);
+histogram(u_n,TimeUnits_1);
+% Ploting the Expected Gaussian Graph
+hold on
+mu_n = mean(u_n); sigma_n = std(u_n);
+x = linspace (mu_n-4*sigma_n, mu_n+4*sigma_n);
+plot(x, normpdf (x,mu_n,sigma_n))
+title('Probability Distribution of EigenVector number=50 in C');
+ 
+figure;
+nr=n;
+u_nr = evectors_hor_rand(:,nr);
+histogram(u_nr,TimeUnits_1);
+% Ploting the Expected Gaussian Graph
+hold on
+mu_nr = mean(u_nr); sigma_nr = std(u_nr);
+x = linspace (mu_nr-4*sigma_nr, mu_nr+4*sigma_nr);
+plot(x, normpdf (x,mu_nr,sigma_nr))
+title('Probability Distribution of EigenVector number=50x in R');
+
+%% Functions
+
+function [opt_portfolio,min_risk] = opt_risk_for_return_vector(CovMat,Return, Stocksmean)
+    
+    e = ones(length(Stocksmean),1);
+    CovMatInv = CovMat^-1;
+    A = e.'*CovMatInv*e;
+    B = Stocksmean.'*CovMatInv*e;
+    C = Stocksmean.'*CovMatInv*Stocksmean;
+    D = A*C - B^2;
+    opt_portfolio = ((C - Return*B)/D).*(CovMatInv*e)+((Return*A-B)/D).*(CovMatInv*Stocksmean);
+    min_risk = zeros(length(Return),1);
+    for i=1:length(Return)
+        min_risk(i) = opt_portfolio(:,i).' * CovMat * opt_portfolio(:,i);
+    end
+end
+
+function [CovMat,CorMat,sigmas,log_return_means,log_returns] = extract_data_from_values(stock_value)
+    [TimeUnits,N_stocks]=size(stock_value);
+    log_returns = log(stock_value(2:end,:))-log(stock_value(1:end-1,:));
+    log_return_means = mean(log_returns); %is this really the mean, or does log mess it up?
+    sigmas = std(log_returns);
+    g = (log_returns-log_return_means)./sigmas;
+    CorMat = (g.'*g)/(TimeUnits-1);
+    CovMat = log_returns.'*log_returns;
+    log_return_means = reshape(log_return_means, [N_stocks,1]);    
+end
+
+function [evectors_hor,ealues,lambda_plus,lambda_minus,pdf_rm_evalues,lambdas] = extract_data_from_random_symetric_matrix(CorMat,size_original_mat,space)
+    [evectors_hor,evalue_mat] = eig(CorMat);
+    ealues = diag(evalue_mat);
+    % Cunstructing the Density Function
+    Q = (size_original_mat(1)/size_original_mat(2));
+    lambda_plus= 1+(1/Q)+2*sqrt(1/Q);
+    lambda_minus= 1+(1/Q)-2*sqrt(1/Q);
+    lambdas = lambda_minus:space:lambda_plus;
+    pdf_rm_evalues = (Q./(2*pi.*lambdas)).*sqrt((lambda_plus - lambdas).*(lambdas-lambda_minus));
+end
+
+function [Ipr_k,participation_rate] = ipr(u_eigenvector)
+    Ipr_k = sum ((u_eigenvector.^4));
+    participation_rate = 1./Ipr_k;
+end
+
+function [largest_10_stocks_in_vector_index] = largest_10_stocks_indexes(evectors_hor,k_before_lastelement,size_of_evectors_hor)
+    [maxk_values,largest_10_stocks_in_vector_index] = maxk(evectors_hor(:,size_of_evectors_hor-k_before_lastelement+1),10);
+end
+    
